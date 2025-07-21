@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f docker-compose.yml
+    kompose.version: 1.36.0 (HEAD)
+  labels:
+    io.kompose.service: logstash
+  name: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: logstash
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert -f docker-compose.yml
+        kompose.version: 1.36.0 (HEAD)
+      labels:
+        io.kompose.service: logstash
+    spec:
+      containers:
+        - image: docker.elastic.co/logstash/logstash:8.13.0
+          name: logstash
+          ports:
+            - containerPort: 5044
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /usr/share/logstash/data
+              name: logstash-data
+      restartPolicy: Always
+      volumes:
+        - name: logstash-data
+          persistentVolumeClaim:
+            claimName: logstash-data

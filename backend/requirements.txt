@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+pydantic
+docker
+python-keycloak
+sqlalchemy
+psycopg2-binary
+
+requests
+chromadb-client
+langchain
+langchain-community
+crewai
+cryptography
+python-multipart
+hvac
+slowapi

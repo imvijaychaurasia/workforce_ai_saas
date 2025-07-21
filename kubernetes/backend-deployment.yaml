@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f docker-compose.yml
+    kompose.version: 1.36.0 (HEAD)
+  labels:
+    io.kompose.service: backend
+  name: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: backend
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert -f docker-compose.yml
+        kompose.version: 1.36.0 (HEAD)
+      labels:
+        io.kompose.service: backend
+    spec:
+      containers:
+        - env:
+            - name: CHROMA_URL
+              value: http://chromadb:8000
+            - name: DATABASE_URL
+              value: postgresql://keycloak:keycloak@postgres:5432/keycloak
+            - name: KEYCLOAK_URL
+              value: http://keycloak:8080
+            - name: MONGO_URL
+              value: mongodb://mongodb:27017
+            - name: OLLAMA_URL
+              value: http://ollama:11434
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: TENANT_MODE
+              value: multi
+          image: backend
+          name: backend
+          ports:
+            - containerPort: 9000
+              protocol: TCP
+      restartPolicy: Always

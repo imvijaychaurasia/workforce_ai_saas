@@ -1,0 +1,241 @@
+## Docker Compose for SaaS AI Platform (Phase 1)
+# Each service is dockerized and multi-tenant aware. Secrets/configs via ENV or Docker secrets.
+# 'version' key is obsolete in Compose v2+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_DB=postgres
+      - KC_DB_URL_HOST=postgres
+      - KC_DB_URL_DATABASE=keycloak
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=keycloak
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    # Multi-tenant: Realms per tenant
+    command: ["start-dev"]
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=keycloak
+      - POSTGRES_USER=keycloak
+      - POSTGRES_PASSWORD=keycloak
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    # Multi-tenant: Separate schemas per tenant (recommended)
+
+  mongodb:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    # Multi-tenant: Collections per tenant
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    # Multi-tenant: Namespaces per tenant
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    # Multi-tenant: Key prefixes per tenant
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    # Multi-tenant: Model access per tenant
+
+  backend:
+    build: ../backend
+    ports:
+      - "9000:9000"
+    environment:
+      - DATABASE_URL=postgresql://keycloak:keycloak@postgres:5432/keycloak
+      - MONGO_URL=mongodb://mongodb:27017
+      - CHROMA_URL=http://chromadb:8000
+      - REDIS_URL=redis://redis:6379
+      - OLLAMA_URL=http://ollama:11434
+      - KEYCLOAK_URL=http://keycloak:8080
+      - TENANT_MODE=multi
+    depends_on:
+      - keycloak
+      - postgres
+      - mongodb
+      - chromadb
+      - redis
+      - ollama
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Multi-tenant: All APIs scoped by tenant
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.Name}}"
+
+  frontend:
+    build: ../frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://backend:9000
+      - REACT_APP_KEYCLOAK_URL=http://keycloak:8080
+      - TENANT_MODE=multi
+    depends_on:
+      - backend
+      - keycloak
+    restart: unless-stopped
+    # Multi-tenant: UI scoped by tenant
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.Name}}"
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin
+      - N8N_PROTOCOL=http
+      - N8N_PORT=5678
+      - N8N_TENANT_MODE=multi
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: unless-stopped
+    # Multi-tenant: Workflows per tenant (recommended)
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    # Multi-tenant: Index per tenant (recommended)
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.0
+    ports:
+      - "5044:5044"
+    volumes:
+      - ../logstash/pipeline:/usr/share/logstash/pipeline:ro
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    # Multi-tenant: Pipelines per tenant (recommended)
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    # Multi-tenant: Dashboards per tenant (recommended)
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    # Multi-tenant: Metrics per tenant (recommended)
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    # Multi-tenant: Dashboards per tenant (recommended)
+
+  mcp-server:
+    build: ../mcp-server
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.Name}}"
+
+  vault:
+    image: hashicorp/vault:latest
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "root"
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    cap_add:
+      - IPC_LOCK
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  mongo_data:
+  ollama_data:
+  n8n_data:
+  es_data:
+  logstash_data:
+  prometheus_data:
+  grafana_data:
+
+# --- Phase 2: Dynamic Module Containers ---
+# Modules (e.g., nmap, semgrep) will be launched per tenant as separate containers.
+# Example (not active by default):
+#
+#  tenant1-nmap:
+#    image: instrumentisto/nmap
+#    environment:
+#      - TENANT_ID=tenant1
+#      - MODULE_CONFIG={...}
+#    networks:
+#      - default
+#    restart: unless-stopped
+#
+#  tenant2-semgrep:
+#    image: returntocorp/semgrep
+#    environment:
+#      - TENANT_ID=tenant2
+#      - MODULE_CONFIG={...}
+#    networks:
+#      - default
+#    restart: unless-stopped
+#
+# These containers will be managed dynamically by the backend/module loader.
+#
+# End of Phase 2 Compose. Modules and integrations supported.
